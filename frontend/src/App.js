@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Car, Bitcoin, User, Calendar, MapPin, Star, Menu, X } from 'lucide-react';
 
-// API Base URL - direct connection
-const API_BASE = 'http://127.0.0.1:5000/api';
+// API Base URL - direct connection (port 5001 to avoid macOS AirPlay)
+const API_BASE = 'http://127.0.0.1:5001/api';
 
 // Utility functions
 const formatDate = (dateString) => {

@@ -17,10 +17,26 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET', 'jwt-secret-string')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)
 
-# initialize extensions 
+# initialize extensions
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*", "allow_headers": ["Content-Type", "Authorization"], "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]}})
+
+# JWT error handlers
+@jwt.invalid_token_loader
+def invalid_token_callback(error):
+    print(f"Invalid token error: {error}")
+    return jsonify({'message': 'Invalid token', 'error': str(error)}), 422
+
+@jwt.unauthorized_loader
+def unauthorized_callback(error):
+    print(f"Unauthorized error: {error}")
+    return jsonify({'message': 'Missing Authorization Header', 'error': str(error)}), 401
+
+@jwt.expired_token_loader
+def expired_token_callback(jwt_header, jwt_payload):
+    print(f"Expired token: {jwt_payload}")
+    return jsonify({'message': 'Token has expired'}), 401
 
 # MODELS 
 class User(db.Model):
@@ -41,8 +57,8 @@ class User(db.Model):
 
 class Ride(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    driver_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
-    origin = db.Column(db.String(200), unique=True, nullable=False)
+    driver_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    origin = db.Column(db.String(200), nullable=False)
     destination = db.Column(db.String(200), nullable=False)
     departure_time = db.Column(db.DateTime, nullable=False)
     available_seats = db.Column(db.Integer, nullable=False)
@@ -53,7 +69,7 @@ class Ride(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # add the relationships
-    bookings = db.relationship('Booking', backref='passenger', lazy=True)
+    bookings = db.relationship('Booking', backref='ride', lazy=True)
 
 class Booking(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -105,14 +121,14 @@ def login():
     user = User.query.filter_by(username=data['username']).first()
     
     if user and check_password_hash(user.password_hash, data['password']):
-        access_token = create_access_token(identity=user.id)
+        access_token = create_access_token(identity=str(user.id))
         return jsonify({
             'access_token': access_token,
             'user': {
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
-                'phone': user.phone,
+                'phone': user.phone_number,
                 'rating': user.rating,
                 'bitcoin_address': user.bitcoin_address
             }
@@ -146,7 +162,7 @@ def get_rides():
 @jwt_required()
 def create_ride():
     data = request.get_json()
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     ride = Ride(
         driver_id=user_id,
@@ -168,7 +184,7 @@ def create_ride():
 @jwt_required()
 def book_ride():
     data = request.get_json()
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     ride = Ride.query.get(data['ride_id'])
     if not ride or ride.available_seats < data['seats_booked']:
@@ -206,14 +222,14 @@ def book_ride():
 @app.route('/api/profile', methods=['GET'])
 @jwt_required()
 def get_profile():
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     user = User.query.get(user_id)
     
     return jsonify({
         'id': user.id,
         'username': user.username,
         'email': user.email,
-        'phone': user.phone,
+        'phone': user.phone_number,
         'rating': user.rating,
         'total_ratings': user.total_ratings,
         'bitcoin_address': user.bitcoin_address
@@ -222,7 +238,7 @@ def get_profile():
 @app.route('/api/my-rides', methods=['GET'])
 @jwt_required()
 def get_my_rides():
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     rides = Ride.query.filter_by(driver_id=user_id).all()
     
     rides_list = []
@@ -244,7 +260,7 @@ def get_my_rides():
 @app.route('/api/my-bookings', methods=['GET'])
 @jwt_required()
 def get_my_bookings():
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     bookings = Booking.query.filter_by(passenger_id=user_id).all()
     
     bookings_list = []
@@ -266,7 +282,79 @@ def get_my_bookings():
     
     return jsonify(bookings_list)
 
+# Bitcoin Testnet Payment Routes
+from bitcoin_testnet import BitcoinTestnetPayment
+
+bitcoin_testnet = BitcoinTestnetPayment()
+
+@app.route('/api/bitcoin/create-payment', methods=['POST'])
+@jwt_required()
+def create_bitcoin_payment():
+    """Create a Bitcoin testnet payment for a booking"""
+    data = request.get_json()
+    booking_id = data.get('booking_id')
+    testnet_address = data.get('testnet_address')  # User provides their testnet address
+
+    booking = Booking.query.get(booking_id)
+    if not booking or booking.payment_method != 'bitcoin':
+        return jsonify({'message': 'Invalid booking or not a Bitcoin payment'}), 400
+
+    # Generate QR code for payment
+    amount_btc = booking.total_amount_bitcoin / 100000000  # Convert satoshis to BTC
+    qr_code = bitcoin_testnet.generate_payment_qr(testnet_address, amount_btc)
+
+    return jsonify({
+        'payment_address': testnet_address,
+        'amount_btc': amount_btc,
+        'amount_satoshis': booking.total_amount_bitcoin,
+        'qr_code': qr_code,  # Base64 encoded QR code
+        'booking_id': booking_id
+    })
+
+@app.route('/api/bitcoin/verify-payment', methods=['POST'])
+@jwt_required()
+def verify_bitcoin_payment():
+    """Verify if a Bitcoin testnet payment has been received"""
+    data = request.get_json()
+    booking_id = data.get('booking_id')
+    address = data.get('address')
+
+    booking = Booking.query.get(booking_id)
+    if not booking:
+        return jsonify({'message': 'Booking not found'}), 404
+
+    # Check if payment has been received
+    payment_info = bitcoin_testnet.verify_payment(
+        address,
+        int(booking.total_amount_bitcoin),
+        min_confirmations=1
+    )
+
+    if payment_info:
+        # Update booking status
+        booking.payment_status = 'confirmed'
+        booking.bitcoin_tx_hash = payment_info['txid']
+        db.session.commit()
+
+        return jsonify({
+            'verified': True,
+            'transaction': payment_info,
+            'message': 'Payment confirmed!'
+        })
+
+    return jsonify({'verified': False, 'message': 'Payment not yet received'})
+
+@app.route('/api/bitcoin/faucets', methods=['GET'])
+def get_testnet_faucets():
+    """Get list of Bitcoin testnet faucets"""
+    from bitcoin_testnet import TESTNET_FAUCETS
+    return jsonify({'faucets': TESTNET_FAUCETS})
+
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    app.run(debug=True)
+
+    # Use environment PORT or default to 5001
+    port = int(os.getenv('PORT', 5001))
+    debug = os.getenv('FLASK_ENV') != 'production'
+    app.run(host='0.0.0.0', port=port, debug=debug)

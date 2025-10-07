@@ -349,7 +349,17 @@ def get_testnet_faucets():
     """Get list of Bitcoin testnet faucets"""
     from bitcoin_testnet import TESTNET_FAUCETS
     return jsonify({'faucets': TESTNET_FAUCETS})
-
+@app.route("/")
+def home():
+    return jsonify({
+        "message": "Welcome to Satoshi Shuttle API 🚀",
+        "endpoints": {
+            "register": "/api/register",
+            "login": "/api/login",
+            "rides": "/api/rides",
+            "bookings": "/api/bookings"
+        }
+    })
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()

@@ -104,7 +104,7 @@ npm start
 ## 📁 Project Structure
 
 ```
-rideshare-connect/
+satoshishuttle/
 ├── app.py                 # Main Flask application
 ├── requirements.txt       # Python dependencies
 ├── .env.example          # Environment variables template
@@ -241,7 +241,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📞 Support
 
 For questions and support:
-- Create an [Issue](https://github.com/yourusername/rideshare-connect/issues)
 - Email: gracemugoiri@gmail.com
 - Twitter: [@yourusername](hhttps://twitter.com/home)
 
